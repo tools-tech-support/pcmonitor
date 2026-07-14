@@ -163,6 +163,11 @@ class GpuReader(object):
 class CpuReader(object):
     def __init__(self, dll_dir):
         import pythonnet
+        if getattr(sys, "frozen", False):
+            import glob
+            pydll = glob.glob(os.path.join(sys._MEIPASS, "python3*.dll"))
+            if pydll:
+                os.environ["PYTHONNET_PYDLL"] = pydll[0]
         try:
             pythonnet.load("netfx")
         except Exception:
@@ -788,6 +793,12 @@ class App(object):
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
             for fn in os.listdir(s["dir"]):
                 z.write(os.path.join(s["dir"], fn), arcname=fn)
+        
+        try:
+            shutil.rmtree(s["dir"])
+        except Exception as e:
+            log.warning("Could not remove session dir: %s", e)
+            
         return zip_path
 
     # ---- exit / run
@@ -847,13 +858,10 @@ def main():
         print("GameTuneLogger runs on Windows only.")
         return
     os.makedirs(LOG_DIR, exist_ok=True)
-    ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GameTuneLoggerMutex")
+    main.mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GameTuneLoggerMutex")
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        msgbox("GameTuneLogger is already running (check the system tray).")
         return
     if not is_admin():
-        msgbox("GameTuneLogger needs Administrator rights for CPU temperature "
-               "and FPS capture (ETW).\n\nPress OK, then accept the UAC prompt.")
         relaunch_as_admin()
         return
     App().run()
