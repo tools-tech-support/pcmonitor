@@ -1,0 +1,5 @@
+pystray==0.19.5
+Pillow>=10.3
+psutil>=5.9
+nvidia-ml-py>=12.535
+pythonnet>=3.0.3
