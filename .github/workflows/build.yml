@@ -38,8 +38,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release download --repo LibreHardwareMonitor/LibreHardwareMonitor --pattern "LibreHardwareMonitor.zip" --dir lhm
-          Expand-Archive lhm/LibreHardwareMonitor.zip -DestinationPath lhm/x
+          gh release download --repo LibreHardwareMonitor/LibreHardwareMonitor --pattern "LibreHardwareMonitor-net472.zip" --dir lhm
+          Expand-Archive lhm/LibreHardwareMonitor-net472.zip -DestinationPath lhm/x
           Copy-Item (Get-ChildItem lhm/x -Recurse -Filter "LibreHardwareMonitorLib.dll" | Select-Object -First 1).FullName .
           $hid = Get-ChildItem lhm/x -Recurse -Filter "HidSharp.dll" | Select-Object -First 1
           if ($hid) { Copy-Item $hid.FullName . }
@@ -51,6 +51,8 @@ jobs:
           --collect-all pythonnet
           --collect-all clr_loader
           --hidden-import pystray._win32
+          --uac-admin
+          --version-file version.txt
           gametune_logger.py
 
       - name: Bundle runtime files

@@ -69,23 +69,7 @@ def msgbox(text, title=APP_NAME, flags=0x40):
         pass
 
 
-def is_admin():
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        return False
 
-
-def relaunch_as_admin():
-    try:
-        if getattr(sys, "frozen", False):
-            exe, params = sys.executable, ""
-        else:
-            exe = sys.executable
-            params = '"%s"' % os.path.abspath(__file__)
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1)
-    except Exception:
-        log.exception("relaunch_as_admin failed")
 
 
 # ----------------------------------------------------------------- GPU (NVML)
@@ -830,6 +814,14 @@ class App(object):
                 os._exit(0)
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_dashboard(self, icon=None, item=None):
+        exe = sys.executable
+        if getattr(sys, "frozen", False):
+            args = [exe, "--dashboard"]
+        else:
+            args = [exe, os.path.abspath(__file__), "--dashboard"]
+        subprocess.Popen(args, creationflags=0x08000000)
+
     def run(self):
         import pystray
         menu = pystray.Menu(
@@ -837,6 +829,7 @@ class App(object):
                 lambda item: ("Stop & save log" if self.recording
                               else "Start logging"),
                 self.on_toggle, default=True),
+            pystray.MenuItem("View Dashboard", self.on_dashboard),
             pystray.MenuItem("Open logs folder",
                              lambda icon, item: os.startfile(LOG_DIR)),
             pystray.MenuItem("Exit", self.on_exit),
@@ -854,15 +847,17 @@ class App(object):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--dashboard":
+        import dashboard_ui
+        dashboard_ui.run_dashboard(LOG_DIR)
+        return
+
     if sys.platform != "win32":
         print("GameTuneLogger runs on Windows only.")
         return
     os.makedirs(LOG_DIR, exist_ok=True)
     main.mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\GameTuneLoggerMutex")
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
-        return
-    if not is_admin():
-        relaunch_as_admin()
         return
     App().run()
 
