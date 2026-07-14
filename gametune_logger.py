@@ -277,7 +277,18 @@ class FrameParser(threading.Thread):
                 self.error = "PresentMon CSV never appeared (is PresentMon.exe present / admin rights?)"
                 return
             time.sleep(0.3)
-        f = open(self.csv_path, "r", encoding="utf-8-sig", errors="ignore", newline="")
+        f = None
+        for _ in range(20):
+            if self.stop_event.is_set():
+                return
+            try:
+                f = open(self.csv_path, "r", encoding="utf-8-sig", errors="ignore", newline="")
+                break
+            except Exception:
+                time.sleep(0.5)
+        if f is None:
+            self.error = "PresentMon CSV could not be opened (Permission denied or locked)"
+            return
         try:
             header = self._read_line_blocking(f, timeout=20)
             if not header:
