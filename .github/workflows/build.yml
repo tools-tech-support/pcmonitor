@@ -1,0 +1,67 @@
+name: Build GameTuneLogger (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Download PresentMon (Intel, MIT license)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release download --repo GameTechDev/PresentMon --pattern "PresentMon-*-x64.exe" --dir pm
+          $f = Get-ChildItem pm -Filter "PresentMon-*-x64.exe" | Select-Object -First 1
+          Copy-Item $f.FullName "PresentMon.exe"
+
+      - name: Download LibreHardwareMonitor DLLs (MPL 2.0)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release download --repo LibreHardwareMonitor/LibreHardwareMonitor --pattern "LibreHardwareMonitor.zip" --dir lhm
+          Expand-Archive lhm/LibreHardwareMonitor.zip -DestinationPath lhm/x
+          Copy-Item (Get-ChildItem lhm/x -Recurse -Filter "LibreHardwareMonitorLib.dll" | Select-Object -First 1).FullName .
+          $hid = Get-ChildItem lhm/x -Recurse -Filter "HidSharp.dll" | Select-Object -First 1
+          if ($hid) { Copy-Item $hid.FullName . }
+
+      - name: Build EXE with PyInstaller
+        run: >
+          pyinstaller --noconfirm --clean --onedir --noconsole
+          --name GameTuneLogger
+          --collect-all pythonnet
+          --collect-all clr_loader
+          --hidden-import pystray._win32
+          gametune_logger.py
+
+      - name: Bundle runtime files
+        shell: pwsh
+        run: |
+          Copy-Item PresentMon.exe dist/GameTuneLogger/
+          Copy-Item LibreHardwareMonitorLib.dll dist/GameTuneLogger/
+          if (Test-Path HidSharp.dll) { Copy-Item HidSharp.dll dist/GameTuneLogger/ }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameTuneLogger-win64
+          path: dist/GameTuneLogger
