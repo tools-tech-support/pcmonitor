@@ -825,6 +825,7 @@ class App(object):
     def run(self):
         import pystray
         menu = pystray.Menu(
+            pystray.MenuItem("GameTuneLogger v1.0.1", lambda: None, enabled=False),
             pystray.MenuItem(
                 lambda item: ("Stop & save log" if self.recording
                               else "Start logging"),
