@@ -195,7 +195,10 @@ class CpuReader(object):
                     elif st == "load" and name == "CPU Total":
                         d["cpu_load_pct"] = round(val, 1)
                     elif st == "power" and name in ("CPU Package", "Package"):
-                        d["cpu_power_w"] = round(val, 1)
+                        # a blocked/broken ring0 driver reports a flat 0.0 W -
+                        # treat that as "no reading" rather than a real value
+                        if val > 0:
+                            d["cpu_power_w"] = round(val, 1)
                     elif st == "clock" and "core" in name.lower() and "bus" not in name.lower():
                         clocks.append(val)
                 if d["cpu_temp_c"] is None and core_max is not None:
@@ -253,12 +256,17 @@ class PresentMonRunner(object):
 class FrameParser(threading.Thread):
     """Tails the PresentMon CSV and aggregates frametimes per process."""
 
-    def __init__(self, csv_path):
+    def __init__(self, csv_path, oneshot=False):
         super(FrameParser, self).__init__(daemon=True)
         self.csv_path = csv_path
+        self.oneshot = oneshot  # parse existing file once to EOF, no tailing
         self.stop_event = threading.Event()
         self.apps = {}  # (app, pid) -> {"fts": [], "cum": float, "buckets": {sec: [n, sum, max]}}
         self.first_row_wall = None
+        self.app_first_wall = {}  # (app, pid) -> wall time of its first row
+        self.app_first_time = {}  # (app, pid) -> capture-relative time (s) of its first row
+        self.time_i = None
+        self.time_scale = 1.0
         self.header_ok = False
         self.error = None
         self.truncated = False
@@ -279,12 +287,14 @@ class FrameParser(threading.Thread):
             time.sleep(0.3)
         f = None
         for _ in range(20):
-            if self.stop_event.is_set():
+            if self.stop_event.is_set() and not self.oneshot:
                 return
             try:
                 f = open(self.csv_path, "r", encoding="utf-8-sig", errors="ignore", newline="")
                 break
             except Exception:
+                if self.oneshot:
+                    break
                 time.sleep(0.5)
         if f is None:
             self.error = "PresentMon CSV could not be opened (Permission denied or locked)"
@@ -309,8 +319,17 @@ class FrameParser(threading.Thread):
             if ft_i is None:
                 self.error = "no frametime column in header: %s" % header.strip()
                 return
+            # capture-relative timestamp column (name/unit varies by version);
+            # used to align the game timeline with sensor rows
+            for cand, scale in (("timeinseconds", 1.0), ("cpustarttime", 1.0),
+                                ("timeinms", 0.001), ("cpustarttimeinms", 0.001)):
+                if cand in cols:
+                    self.time_i = cols.index(cand)
+                    self.time_scale = scale
+                    break
             self.header_ok = True
-            need = max(app_i, pid_i, ft_i) + 1
+            need = max(app_i, pid_i, ft_i,
+                       self.time_i if self.time_i is not None else 0) + 1
             pending = ""
             while True:
                 chunk = f.readline()
@@ -321,7 +340,7 @@ class FrameParser(threading.Thread):
                     line, pending = pending, ""
                     self._row(line, app_i, pid_i, ft_i, need)
                     continue
-                if self.stop_event.is_set():
+                if self.stop_event.is_set() or self.oneshot:
                     break
                 time.sleep(0.25)
         finally:
@@ -337,7 +356,7 @@ class FrameParser(threading.Thread):
                 if buf.endswith("\n"):
                     return buf
             else:
-                if self.stop_event.is_set():
+                if self.stop_event.is_set() or self.oneshot:
                     return buf if buf else None
                 time.sleep(0.2)
         return buf if buf.endswith("\n") else None
@@ -358,6 +377,13 @@ class FrameParser(threading.Thread):
         if rec is None:
             rec = {"fts": [], "cum": 0.0, "buckets": {}}
             self.apps[key] = rec
+            self.app_first_wall[key] = time.time()
+            if self.time_i is not None and len(parts) > self.time_i:
+                try:
+                    self.app_first_time[key] = (float(parts[self.time_i])
+                                                * self.time_scale)
+                except ValueError:
+                    pass
         rec["cum"] += ft / 1000.0
         if len(rec["fts"]) < MAX_STORED_FRAMES:
             rec["fts"].append(ft)
@@ -507,7 +533,18 @@ class App(object):
         if os.path.exists(dll):
             try:
                 self.cpu = CpuReader(BASE)
+                probe = self.cpu.read()
+                if probe.get("cpu_temp_c") is None:
+                    # Win11 (24H2+) blocklists LHM's bundled WinRing0 driver;
+                    # temps/clocks/power then all read as None even as admin.
+                    self.init_notes.append(
+                        "CPU temp unreadable - Windows likely blocked the "
+                        "WinRing0 driver; install PawnIO (https://pawnio.eu) "
+                        "and restart the app")
+                    log.warning("CpuReader probe: cpu_temp_c is None "
+                                "(WinRing0 blocked? -> PawnIO needed)")
             except Exception as e:
+                self.cpu = None
                 self.init_notes.append("CPU sensors failed (LibreHardwareMonitor): %s" % e)
                 log.exception("CpuReader init failed")
         else:
@@ -618,6 +655,24 @@ class App(object):
 
     def _finish(self, s):
         parser = s["parser"]
+        raw = os.path.join(s["dir"], "presentmon_raw.csv")
+        # PresentMon (v2.x) holds its output CSV with an exclusive lock while it
+        # runs, so the live tail usually never gets to read a single row.  Now
+        # that PresentMon has exited the file is complete and readable - parse
+        # it from the start if the live parser came up empty.
+        if (parser.error or not parser.apps) and os.path.exists(raw):
+            pp = FrameParser(raw, oneshot=True)
+            try:
+                pp._run()
+            except Exception:
+                log.exception("post-stop reparse failed")
+            if pp.apps:
+                pp.error = ("live CSV tail failed (%s) - stats parsed from "
+                            "file after stop" % (parser.error or
+                                                 "no rows seen live"))
+                pp.app_first_wall = {}  # wall clocks of a post-parse mean nothing
+                pp.first_row_wall = None
+                parser = pp
         sensors = s["sensors"]
         wall_dur = time.time() - s["wall_start"]
         notes = list(self.init_notes)
@@ -732,9 +787,19 @@ class App(object):
         summary["whea_events"] = whea_count(wall_dur)
 
         # timeline.csv (per-second, game + sensors joined)
+        # Align sensor rows to the *game's* first frame, not the first frame of
+        # any process (dwm etc. present long before a game that launches late).
+        # Prefer the capture-relative timestamp from the CSV itself; fall back
+        # to the wall time at which the live tail first saw the game.
         offset = 0
-        if parser.first_row_wall:
-            offset = int(round(parser.first_row_wall - s["wall_start"]))
+        t0 = parser.app_first_time.get(game_key) if game_key else None
+        if t0 is not None:
+            offset = int(round(t0))
+        else:
+            game_wall = (parser.app_first_wall.get(game_key)
+                         or parser.first_row_wall)
+            if game_wall:
+                offset = int(round(game_wall - s["wall_start"]))
         tl_path = os.path.join(s["dir"], "timeline.csv")
         with open(tl_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -836,7 +901,7 @@ class App(object):
     def run(self):
         import pystray
         menu = pystray.Menu(
-            pystray.MenuItem("GameTuneLogger v1.0.1", lambda: None, enabled=False),
+            pystray.MenuItem("GameTuneLogger v1.0.2", lambda: None, enabled=False),
             pystray.MenuItem(
                 lambda item: ("Stop & save log" if self.recording
                               else "Start logging"),

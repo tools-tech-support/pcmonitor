@@ -57,12 +57,17 @@
 - เทียบผลจูน BIOS: เก็บ **1 session ต่อ 1 Phase** (เช่น Phase 1 หนึ่งไฟล์, Phase 2 หนึ่งไฟล์) แล้วส่งมาคู่กัน
 - ถ้าจำได้ จดคร่าว ๆ ว่านาทีไหนเกิดอะไร (เช่น "นาที 3 โดดร่ม Pochinki, นาที 12 ไฟต์ใหญ่") จะช่วยให้วิเคราะห์แม่นขึ้นมาก
 
+## ดูผลด้วย Dashboard ในตัว
+
+คลิกขวาไอคอน tray → **View Dashboard** — เปิดหน้าต่างกราฟ: เลือก session จากแถบซ้าย, KPI 6 ค่า (avg fps / 1% low / 0.1% low / max CPU°C / max GPU°C / WHEA), กราฟ fps + เซนเซอร์ทุกตัว (คลิก legend เพื่อเปิด-ปิดเส้น) และตารางสรุป**ทุก parameter** จาก summary — ค่าไหนหายจะขึ้น MISSING สีแดงพร้อม notes บอกสาเหตุ
+
 ## Troubleshooting
 
 | อาการ | แก้ |
 |---|---|
-| ไม่มีค่า cpu_temp ใน log | ไม่ได้ Run as administrator หรือ `LibreHardwareMonitorLib.dll` ไม่อยู่ข้าง exe |
+| ไม่มีค่า cpu_temp ใน log | 1) ไม่ได้ Run as administrator 2) DLL ของ LibreHardwareMonitor ต้องอยู่ข้าง exe **ครบทั้งชุด** (ไม่ใช่แค่ `LibreHardwareMonitorLib.dll` — build จาก Actions รุ่น v1.0.2 ขึ้นไปแพ็คให้ครบแล้ว) 3) **Windows 11 รุ่นใหม่บล็อก driver WinRing0** — ติดตั้ง [PawnIO](https://pawnio.eu) แล้วเปิดโปรแกรมใหม่ (ดู notes ใน summary.txt จะบอกสาเหตุที่เจอ) |
 | fps เป็น 0 / ไม่มีข้อมูลเฟรม | `PresentMon.exe` ไม่อยู่ข้าง exe — ดาวน์โหลดจาก github.com/GameTechDev/PresentMon/releases (ไฟล์ `PresentMon-x.x.x-x64.exe`) เปลี่ยนชื่อเป็น `PresentMon.exe` วางข้าง ๆ |
+| notes ขึ้น "live CSV tail failed ... parsed from file after stop" | **ปกติ ไม่ใช่ error** — PresentMon ล็อกไฟล์ CSV ระหว่างอัด โปรแกรมเลยอ่านทั้งไฟล์ตอนกด Stop แทน ข้อมูลครบเหมือนกัน |
 | ไม่มีค่า GPU | ไดรเวอร์ NVIDIA ไม่อยู่ / ไม่ใช่การ์ด NVIDIA |
 | เปิดแล้วไม่เห็นอะไร | ดูไอคอนใน tray (กดลูกศร ^ มุมขวาล่าง) และดูไฟล์ `gametune_debug.log` ข้าง exe |
 

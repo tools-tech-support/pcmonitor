@@ -155,6 +155,13 @@ gametune-logger/
 - PyInstaller: `--onedir --noconsole --name GameTuneLogger --collect-all pythonnet --collect-all clr_loader --hidden-import pystray._win32`
 - copy PresentMon.exe + DLL เข้า `dist/GameTuneLogger/` → upload artifact `GameTuneLogger-win64`
 
+### 4.8a สิ่งที่ค้นพบจากการเทสจริง (15 ก.ค. 2026, ASUS TUF F17 / i7-12700H / RTX 4060 Laptop)
+- **PresentMon v2.x ล็อกไฟล์ CSV แบบ exclusive ตลอดการอัด** → live tail เปิดไฟล์ไม่ได้เลย (Permission denied) — แก้แล้ว v1.0.2: parse ทั้งไฟล์ตอน Stop (oneshot reparse) + ใช้คอลัมน์ `TimeInMs` align timeline; fps ครบแน่นอน
+- **LibreHardwareMonitorLib.dll ต้องมี assembly ประกอบครบชุด** (System.Memory.dll ฯลฯ จาก zip เดียวกัน) ไม่งั้น CpuReader ตายตั้งแต่ init → CPU temp/power = None ทั้ง session — แก้แล้ว: build.yml copy DLL ทุกตัว
+- **LHM release ล่าสุดเปลี่ยนชื่อ asset**: ต้องใช้ `LibreHardwareMonitor.zip` (net472) — `LibreHardwareMonitor-net472.zip` ไม่มีแล้ว
+- **Windows 11 รุ่นใหม่บล็อก WinRing0** (vulnerable driver blocklist) → CPU temp/clock/power = None แม้เป็น admin — ต้องติดตั้ง PawnIO (https://pawnio.eu) บนเครื่องที่จะรัน; แอปตรวจแล้วเตือนใน notes
+- PresentMon v2.5.1 CSV header จริง: `MsBetweenPresents` (frametime) + `TimeInMs` (เวลานับจากเริ่ม capture, ms)
+
 ### 4.8 ข้อจำกัด / ความเสี่ยงที่รู้ (ยังไม่ได้เทสบน Windows จริง)
 - CTRL_BREAK จาก GUI process อาจส่งไม่ถึง PresentMon → มี terminate fallback (เสียข้อมูล tail เล็กน้อย)
 - ชื่อ sensor ของ LHM อาจต่างตามเวอร์ชัน/CPU (โค้ดจับ "CPU Package"/"Core Max"/"CPU Total") — ถ้า temp เป็น None ให้ดู `gametune_debug.log`
