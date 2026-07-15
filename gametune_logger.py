@@ -639,8 +639,13 @@ class App(object):
         s["parser"].join(timeout=30)
         s["sensors"].join(timeout=10)
         try:
-            zip_path = self._finish(s)
-            self.notify("Saved: %s" % os.path.basename(zip_path))
+            zip_path, report_path = self._finish(s)
+            msg = "Saved: %s" % os.path.basename(zip_path)
+            if report_path:
+                msg = "Saved: %s (all-in-one) + %s" % (
+                    os.path.basename(report_path),
+                    os.path.basename(zip_path))
+            self.notify(msg)
             try:
                 os.startfile(LOG_DIR)
             except Exception:
@@ -800,43 +805,61 @@ class App(object):
                          or parser.first_row_wall)
             if game_wall:
                 offset = int(round(game_wall - s["wall_start"]))
+        tl_header = (["sec", "fps", "ft_avg_ms", "ft_max_ms"] +
+                     SensorLogger.FIELDS[2:])
+        tl_rows = []
+        for i in range(secs):
+            b = rec["buckets"].get(i) if rec else None
+            fps = b[0] if b else 0
+            ft_avg = round(b[1] / b[0], 2) if b else None
+            ft_max = round(b[2], 2) if b else None
+            srow = (sensors.samples.get(i + offset) or
+                    sensors.samples.get(i + offset + 1) or
+                    sensors.samples.get(i + offset - 1) or {})
+            tl_rows.append([i, fps, ft_avg, ft_max] +
+                           [srow.get(k) for k in SensorLogger.FIELDS[2:]])
         tl_path = os.path.join(s["dir"], "timeline.csv")
         with open(tl_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["sec", "fps", "ft_avg_ms", "ft_max_ms"] +
-                       SensorLogger.FIELDS[2:])
-            for i in range(secs):
-                b = rec["buckets"].get(i) if rec else None
-                fps = b[0] if b else 0
-                ft_avg = round(b[1] / b[0], 2) if b else None
-                ft_max = round(b[2], 2) if b else None
-                srow = (sensors.samples.get(i + offset) or
-                        sensors.samples.get(i + offset + 1) or
-                        sensors.samples.get(i + offset - 1) or {})
-                w.writerow([i, fps, ft_avg, ft_max] +
-                           [srow.get(k) for k in SensorLogger.FIELDS[2:]])
+            w.writerow(tl_header)
+            w.writerows(tl_rows)
 
         # summary.txt
-        sum_path = os.path.join(s["dir"], "summary.txt")
-        with open(sum_path, "w", encoding="utf-8") as f:
-            f.write("%s session summary\n" % APP_NAME)
-            f.write("=" * 34 + "\n")
-            order = ["session", "game", "pid", "duration_s", "frames",
-                     "avg_fps", "median_fps", "fps_1pct_low", "fps_01pct_low",
-                     "ft_p99_ms", "ft_p999_ms", "ft_max_ms", "worst_1s_fps",
-                     "worst_10s_avg_fps", "spikes_gt50ms",
-                     "spikes_gt50ms_per_min", "spikes_gt100ms",
-                     "cpu_temp_avg_c", "cpu_temp_max_c", "cpu_clock_max_mhz",
-                     "cpu_load_avg_pct", "cpu_power_avg_w", "cpu_power_max_w",
-                     "gpu_temp_avg_c", "gpu_temp_max_c", "gpu_load_avg_pct",
-                     "gpu_power_avg_w", "gpu_power_max_w",
-                     "gpu_clock_min_under_load_mhz", "gpu_limited_secs",
-                     "ram_used_max_gb", "whea_events"]
-            for k in order:
-                f.write("%-30s: %s\n" % (k, summary.get(k)))
-            f.write("notes: %s\n" % "; ".join(notes) if notes else "notes: -\n")
-            f.write("\n=== JSON ===\n")
-            f.write(json.dumps(summary, indent=2))
+        order = ["session", "game", "pid", "duration_s", "frames",
+                 "avg_fps", "median_fps", "fps_1pct_low", "fps_01pct_low",
+                 "ft_p99_ms", "ft_p999_ms", "ft_max_ms", "worst_1s_fps",
+                 "worst_10s_avg_fps", "spikes_gt50ms",
+                 "spikes_gt50ms_per_min", "spikes_gt100ms",
+                 "cpu_temp_avg_c", "cpu_temp_max_c", "cpu_clock_max_mhz",
+                 "cpu_load_avg_pct", "cpu_power_avg_w", "cpu_power_max_w",
+                 "gpu_temp_avg_c", "gpu_temp_max_c", "gpu_load_avg_pct",
+                 "gpu_power_avg_w", "gpu_power_max_w",
+                 "gpu_clock_min_under_load_mhz", "gpu_limited_secs",
+                 "ram_used_max_gb", "whea_events"]
+        sum_lines = ["%s session summary" % APP_NAME, "=" * 34]
+        sum_lines += ["%-30s: %s" % (k, summary.get(k)) for k in order]
+        sum_lines.append("notes: %s" % ("; ".join(notes) if notes else "-"))
+        sum_lines += ["", "=== JSON ===", json.dumps(summary, indent=2)]
+        sum_text = "\n".join(sum_lines) + "\n"
+        with open(os.path.join(s["dir"], "summary.txt"), "w",
+                  encoding="utf-8") as f:
+            f.write(sum_text)
+
+        # all-in-one report: one .txt next to the zip with summary + JSON +
+        # per-second timeline, so a session can be read/shared without
+        # unzipping anything
+        report_path = os.path.join(LOG_DIR, "session_%s.txt" % s["stamp"])
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(sum_text)
+                f.write("\n=== TIMELINE (1 row/sec, CSV) ===\n")
+                f.write(",".join(tl_header) + "\n")
+                for row in tl_rows:
+                    f.write(",".join("" if v is None else str(v)
+                                     for v in row) + "\n")
+        except Exception:
+            log.exception("report write failed")
+            report_path = None
 
         # gzip raw presentmon csv
         raw = os.path.join(s["dir"], "presentmon_raw.csv")
@@ -858,8 +881,8 @@ class App(object):
             shutil.rmtree(s["dir"])
         except Exception as e:
             log.warning("Could not remove session dir: %s", e)
-            
-        return zip_path
+
+        return zip_path, report_path
 
     # ---- exit / run
 
@@ -901,7 +924,7 @@ class App(object):
     def run(self):
         import pystray
         menu = pystray.Menu(
-            pystray.MenuItem("GameTuneLogger v1.0.2", lambda: None, enabled=False),
+            pystray.MenuItem("GameTuneLogger v1.0.3", lambda: None, enabled=False),
             pystray.MenuItem(
                 lambda item: ("Stop & save log" if self.recording
                               else "Start logging"),
